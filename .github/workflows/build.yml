@@ -13,8 +13,7 @@ jobs:
         with:
           architecture: 'x64'
           distribution: 'full'
-          variant: 'BC'   # use CS on 8.5
-          version: '8.3'
+          version: '7.9' # use CS on 8.5
       - run: raco pkg install --auto --no-setup --skip-installed
       - run: raco setup --fast-clean meta
       - run: raco setup meta
