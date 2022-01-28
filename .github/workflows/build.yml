@@ -1,0 +1,23 @@
+on: [push, pull_request]
+name: build
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/cache@v1
+        with:
+          path: ~/.local/share/racket
+          key: ${{ runner.os }}-raco-${{ hashFiles('**/info.rkt') }}
+      - uses: Bogdanp/setup-racket@v0.6
+        with:
+          architecture: 'x64'
+          distribution: 'full'
+          variant: 'BC'   # use CS on 8.5
+          version: '8.3'
+      - run: raco pkg install --auto --no-setup --skip-installed
+      - run: raco setup --fast-clean meta
+      - run: raco setup meta
+      - uses: GabrielBB/xvfb-action@v1
+        with:
+          run: raco test --drdr .
