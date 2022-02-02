@@ -229,7 +229,10 @@
                   (and (= (unbox b) 1)
                        (set-box! b 42)
                        (= (unbox b) 42))))
-          (cons (make-hash `(["hi" . 2]))
+          ;;
+          ;; Uncoment when PR #4143 is accepted.
+          ;;
+          #;(cons (make-hash `(["hi" . 2]))
                 (λ (h)
                   (hash-ref-key h (string-copy "hi"))
                   (and (= (hash-ref h "hi") 2)
