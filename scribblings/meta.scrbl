@@ -14,11 +14,6 @@
 
 @defmodule[meta]
 
-@margin-note{
-This library is under development;
-compatibility may not be maintained.
-}
-
 This package provides a mechanism for associating
 arbitrary metadata with values.
 It's inspired by Clojure's
@@ -40,7 +35,8 @@ For others,
 it copies the value
 and uses a weak mutable hash table
 (compared with @racket[eq?])
-to store the metadata.
+to store metadata
+behind the scenes.
 
 @defproc[(meta? [v any/c]) boolean?]{
   Returns whether @racket[v] can have metadata.
