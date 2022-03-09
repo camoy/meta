@@ -19,11 +19,11 @@ arbitrary metadata with values.
 It's inspired by Clojure's
 @link["https://clojure.org/reference/metadata"]{metadata}.
 Attaching metadata to a value does not affect
-@racket[equal?] comparisons,
+@racket[equal?] or @racket[chaperone-of?] comparisons,
 but it may affect @racket[eq?] comparisons.
 The following datatypes don't support metadata:
-booleans, numbers, characters, symbols,
-keywords, mutable pairs and lists, void,
+booleans, strings, byte strings, numbers, characters,
+symbols, keywords, mutable pairs and lists, void,
 undefined, opaque structures.
 
 Under the hood,
@@ -101,6 +101,6 @@ behind the scenes.
   Removes any existing mapping for @racket[key] in the metadata
   for @racket[v].
   @examples[#:eval evaluator
-    (define s (meta-set "hi" 'key "value"))
-    (meta-has-key? (meta-remove s 'key) 'key)]
+    (define v (meta-set (vector) 'key "value"))
+    (meta-has-key? (meta-remove v 'key) 'key)]
 }

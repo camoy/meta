@@ -47,8 +47,6 @@
 
 (define cannot-chaperone?
   (or/c pair?
-        string?
-        bytes?
         regexp?
         pregexp?
         byte-regexp?
@@ -171,8 +169,6 @@
 (define (copy e)
   (cond
     [(pair? e) (cons (car e) (cdr e))]
-    [(string? e) (string-copy e)]
-    [(bytes? e) (bytes-copy e)]
     [(pregexp? e) (pregexp (object-name e))]
     [(regexp? e) (regexp (object-name e))]
     [(byte-pregexp? e) (byte-pregexp (object-name e))]
@@ -273,8 +269,6 @@
                      (current-continuation-marks)
                      mk))))
           (cons (cons 1 2) #f)
-          (cons "hello" #f)
-          (cons #"hello" #f)
           (cons (regexp "hel*o") #f)
           (cons (pregexp "hel*o") #f)
           (cons (byte-regexp #"hel*o") byte-regex-tester)
@@ -288,6 +282,8 @@
        #:! #:t (meta-has-key? t 'foo)
 
        #:do (define t1 (meta-set t 'foo "bar"))
+       #:t (equal? t t1)
+       #:t (chaperone-of? t1 t)
        #:x (meta-ref t 'foo) "no value found for key 'foo"
        #:t (meta-has-key? t1 'foo)
        (meta-ref t1 'foo)  "bar"
