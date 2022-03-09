@@ -9,7 +9,7 @@ jobs:
         with:
           path: ~/.local/share/racket
           key: ${{ runner.os }}-raco-${{ hashFiles('**/info.rkt') }}
-      - uses: Bogdanp/setup-racket@v0.6
+      - uses: Bogdanp/setup-racket@v1.7
         with:
           architecture: 'x64'
           distribution: 'full'
