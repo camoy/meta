@@ -66,7 +66,10 @@
         byte-regexp?
         byte-pregexp?))
 
-(define meta? (or/c can-chaperone? cannot-chaperone?))
+(define meta?
+  (flat-named-contract
+   'meta?
+   (or/c can-chaperone? cannot-chaperone?)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; general functions
