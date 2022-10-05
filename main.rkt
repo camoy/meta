@@ -9,9 +9,23 @@
   [meta? predicate/c]
   [meta-ref (->* (any/c any/c) (failure-result/c) any/c)]
   [meta-has-key? (-> any/c any/c boolean?)]
-  [meta-set (-> meta? any/c any/c meta?)]
-  [meta-update (->* (meta? any/c (-> any/c any/c)) (failure-result/c) meta?)]
-  [meta-remove (-> any/c any/c any/c)]))
+  [meta-set
+   (->i
+    ([obj (st) (if (unsupplied-arg? st) meta? any/c)]
+     [key any/c]
+     [val any/c])
+    (#:struct-type [st struct-type?])
+    [res any/c])]
+  [meta-update
+   (->i
+    ([obj (st) (if (unsupplied-arg? st) meta? any/c)]
+     [key any/c]
+     [update (-> any/c any/c)])
+    ([fail failure-result/c]
+     #:struct-type [st struct-type?])
+    [res any/c])]
+  [meta-remove
+   (->* (any/c any/c) (#:struct-type struct-type?) any/c)]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; require
@@ -52,21 +66,16 @@
         byte-regexp?
         byte-pregexp?))
 
-(define meta?
-  (flat-named-contract
-   'meta?
-   (or/c can-chaperone?
-         cannot-chaperone?)))
+(define meta? (or/c can-chaperone? cannot-chaperone?))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; general functions
 
 (define (meta-ref e k [failure-result UNDEFINED])
   (define meta-hash
-    (cond
-      [(can-chaperone? e) (meta-ref/chaperone e)]
-      [(cannot-chaperone? e) (meta-ref/no-chaperone e)]
-      [else #f]))
+    (if (cannot-chaperone? e)
+        (meta-ref/no-chaperone e)
+        (meta-ref/chaperone e)))
   (cond
     [(and meta-hash (hash-has-key? meta-hash k))
      (hash-ref meta-hash k)]
@@ -79,22 +88,24 @@
   (define v (meta-ref e k MISSING))
   (not (eq? v MISSING)))
 
-(define (meta-set e k v)
-  (if (can-chaperone? e)
-      (meta-set/chaperone e k v)
+(define (meta-set e k v #:struct-type [st #f])
+  (if (or st (can-chaperone? e))
+      (meta-set/chaperone e k v st)
       (meta-set/no-chaperone e k v)))
 
-(define (meta-update e k f [failure-result UNDEFINED])
+(define (meta-update e k f
+                     [failure-result UNDEFINED]
+                     #:struct-type [st #f])
   (define failure-result*
     (if (eq? failure-result UNDEFINED)
         (λ () (error 'meta-update "no value found for key ~v" k))
         failure-result))
   (define v (meta-ref e k failure-result*))
-  (meta-set e k (f v)))
+  (meta-set e k (f v) #:struct-type st))
 
-(define (meta-remove e k)
+(define (meta-remove e k #:struct-type [st #f])
   (cond
-    [(can-chaperone? e) (meta-set/chaperone e k REMOVE)]
+    [(or st (can-chaperone? e)) (meta-set/chaperone e k REMOVE st)]
     [(cannot-chaperone? e) (meta-set/no-chaperone e k REMOVE)]
     [else e]))
 
@@ -107,15 +118,16 @@
 (define (meta-ref/chaperone e)
   (-meta-ref e #f))
 
-(define (meta-set/chaperone e k v)
+(define (meta-set/chaperone e k v st)
   (define old-meta (-meta-ref e EMPTY))
   (define new-meta (meta-hash-set old-meta k v))
   (cond
-    [(procedure? e)
-     (chaperone-procedure e #f impersonator-prop:meta new-meta)]
+    [st (chaperone-struct e st impersonator-prop:meta new-meta)]
     [(struct? e)
      (define-values (struct-type skipped?) (struct-info e))
      (chaperone-struct e struct-type impersonator-prop:meta new-meta)]
+    [(procedure? e)
+     (chaperone-procedure e #f impersonator-prop:meta new-meta)]
     [(vector? e)
      (chaperone-vector e #f #f impersonator-prop:meta new-meta)]
     [(box? e)
@@ -193,11 +205,11 @@
 ;; tests
 
 (module+ test
-  (require (submod "..")
-           chk
+  (require chk
            racket/match)
 
   (struct my-struct (x y z) #:transparent)
+  (struct my-opaque-struct (x y z))
 
   (define (byte-regex-tester v)
     (equal? (bytes->string/utf-8 (object-name v))
@@ -211,21 +223,30 @@
     (equal? (extract st1) (extract st2)))
 
   (define things
-    (list (cons (λ (x) x)
+    (list (list (λ (x) x)
                 (λ (p) (= (p 42) 42)))
-          (cons (my-struct 1 2 3)
+          (list (my-struct 1 2 3)
                 (λ (s) (= (my-struct-x s) 1)))
-          (cons (vector 1 2 3)
+          (list (my-opaque-struct 1 2 3)
+                (λ (s) (= (my-opaque-struct-x s) 1))
+                struct:my-opaque-struct)
+          (list (vector 1 2 3)
                 (λ (v)
                   (vector-set! v 1 42)
                   (and (= (vector-ref v 0) 1)
                        (= (vector-ref v 1) 42))))
-          (cons (box 1)
+          (list (vector-immutable 1 2 3)
+                (λ (v)
+                  (and (= (vector-ref v 0) 1)
+                       (= (vector-ref v 1) 2))))
+          (list (box 1)
                 (λ (b)
                   (and (= (unbox b) 1)
                        (set-box! b 42)
                        (= (unbox b) 42))))
-          (cons (make-hash `(["hi" . 2]))
+          (list (box-immutable 1)
+                (λ (b) (= (unbox b) 1)))
+          (list (make-hash `(["hi" . 2]))
                 (λ (h)
                   (hash-ref-key h (string-copy "hi"))
                   (and (= (hash-ref h "hi") 2)
@@ -234,7 +255,9 @@
                        (equal? (hash-ref-key h (string-copy "hi")) "hi")
                        (hash-remove! h "hi")
                        (not (hash-has-key? h "hi")))))
-          (cons (mutable-set "hi")
+          (list (hash "hi" 2)
+                (λ (h) (= (hash-ref h "hi") 2)))
+          (list (mutable-set "hi")
                 (λ (s)
                   (and (set-member? s "hi")
                        (set-add! s "foo")
@@ -242,82 +265,90 @@
                        (set-remove! s "hi")
                        (not (set-member? s "hi"))
                        (equal? (set-first s) "foo"))))
-          (cons struct:my-struct
+          (list (set "hi")
+                (λ (s) (set-member? s "hi")))
+          (list struct:my-struct
                 (λ (chap-st)
                   (struct-type-equal? struct:my-struct chap-st)))
-          (cons always-evt
+          (list always-evt
                 (λ (e)
                   (equal? (sync e) e)))
-          (cons (make-channel)
+          (list (make-channel)
                 (λ (ch)
                   (define thd (thread (λ () (channel-put ch 42))))
                   (equal? (channel-get ch) 42)))
-          (cons (make-async-channel)
+          (list (make-async-channel)
                 (λ (ch)
                   (async-channel-put ch 42)
                   (equal? (async-channel-get ch) 42)))
-          (cons (make-continuation-prompt-tag)
+          (list (make-continuation-prompt-tag)
                 (λ (pt)
                   (call-with-continuation-prompt
                    (λ () (abort-current-continuation pt 42))
                    pt
                    values)))
-          (cons (make-continuation-mark-key)
+          (list (make-continuation-mark-key)
                 (λ (mk)
                   (with-continuation-mark mk "foo"
                     (continuation-mark-set-first
                      (current-continuation-marks)
                      mk))))
-          (cons (cons 1 2) #f)
-          (cons (regexp "hel*o") #f)
-          (cons (pregexp "hel*o") #f)
-          (cons (byte-regexp #"hel*o") byte-regex-tester)
-          (cons (byte-pregexp #"hel*o") byte-regex-tester)))
+          (list (cons 1 2) #f)
+          (list (regexp "hel*o") #f)
+          (list (pregexp "hel*o") #f)
+          (list (byte-regexp #"hel*o") byte-regex-tester)
+          (list (byte-pregexp #"hel*o") byte-regex-tester)))
 
   (for ([p (in-list things)])
-    (match-define (cons t tester) p)
+    (define-values (t tester st)
+      (match p
+        [(list t tester) (values t tester #f)]
+        [(list t tester st) (values t tester st)]))
     (with-chk (['target t])
       (chk
        #:x (meta-ref t 'foo) "no value found for key 'foo"
        #:! #:t (meta-has-key? t 'foo)
 
-       #:do (define t1 (meta-set t 'foo "bar"))
+       #:do (define t1 (meta-set t 'foo "bar" #:struct-type st))
        #:t (equal? t t1)
        #:t (chaperone-of? t1 t)
        #:x (meta-ref t 'foo) "no value found for key 'foo"
        #:t (meta-has-key? t1 'foo)
        (meta-ref t1 'foo)  "bar"
 
-       #:do (define t2 (meta-set t1 'foo "baz"))
+       #:do (define t2 (meta-set t1 'foo "baz" #:struct-type st))
        #:x (meta-ref t 'foo) "no value found for key 'foo"
        (meta-ref t1 'foo)  "bar"
        (meta-ref t2 'foo)  "baz"
 
-       #:do (define t3 (meta-remove t2 'foo))
+       #:do (define t3 (meta-remove t2 'foo #:struct-type st))
        (meta-ref t2 'foo)  "baz"
        #:x (meta-ref t3 'foo) "meta-ref: no value found for key 'foo"
 
-       #:do (define t4 (meta-update t2 'foo string-upcase))
+       #:do (define t4 (meta-update t2 'foo string-upcase #:struct-type st))
        (meta-ref t4 'foo)  "BAZ"
-       #:x (meta-update t3 'bar values)
+       #:x (meta-update t3 'bar values #:struct-type st)
        "meta-update: no value found for key 'bar"
 
-       #:do (define t5 (meta-update t2 'fuzz add1 1))
+       #:do (define t5 (meta-update t2 'fuzz add1 1 #:struct-type st))
        (meta-ref t5 'fuzz)  2
 
        #:t (if tester (tester t1) (equal? t t1))
-       )))
+       ))))
+
+(module+ test
+  (require (prefix-in c: (submod "..")))
 
   (chk
-   #:! #:t (meta-ref 42 'key #f)
-   #:! #:t (meta-has-key? 42 'key)
-   (meta-remove 42 'key)  42
+   #:! #:t (c:meta-ref 42 'key #f)
+   #:! #:t (c:meta-has-key? 42 'key)
+   (c:meta-remove 42 'key)  42
 
    #:x
-   (meta-set 42 'key 'val)
+   (c:meta-set 42 'key 'val)
    "expected: meta?"
 
    #:x
-   (meta-update 42 'key add1)
+   (c:meta-update 42 'key add1)
    "expected: meta?"
    ))
