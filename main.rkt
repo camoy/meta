@@ -32,15 +32,15 @@
 
 (require racket/async-channel
          racket/list
+         racket/match
          racket/set)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; constants
 
-(define EMPTY (make-immutable-hash))
+(define EMPTY null)
 (define UNDEFINED (gensym))
 (define MISSING (gensym))
-(define REMOVE (gensym))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; predicates
@@ -75,13 +75,13 @@
 ;; general functions
 
 (define (meta-ref e k [failure-result UNDEFINED])
-  (define meta-hash
+  (define meta-map
     (if (cannot-chaperone? e)
         (meta-ref/no-chaperone e)
         (meta-ref/chaperone e)))
+  (define kv-pair (and meta-map (assoc k meta-map)))
   (cond
-    [(and meta-hash (hash-has-key? meta-hash k))
-     (hash-ref meta-hash k)]
+    [kv-pair (cdr kv-pair)]
     [(eq? failure-result UNDEFINED)
      (error 'meta-ref "no value found for key ~v" k)]
     [(procedure? failure-result) (failure-result)]
@@ -108,8 +108,8 @@
 
 (define (meta-remove e k #:struct-type [st #f])
   (cond
-    [(or st (can-chaperone? e)) (meta-set/chaperone e k REMOVE st)]
-    [(cannot-chaperone? e) (meta-set/no-chaperone e k REMOVE)]
+    [(or st (can-chaperone? e)) (meta-remove/chaperone e k #f st)]
+    [(cannot-chaperone? e) (meta-remove/no-chaperone e k #f)]
     [else e]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -121,20 +121,20 @@
 (define (meta-ref/chaperone e)
   (-meta-ref e #f))
 
-(define (meta-set/chaperone e k v st)
-  (define old-meta (-meta-ref e EMPTY))
-  (define new-meta (meta-hash-set old-meta k v))
+(define ((make-meta-set/chaperone set/remove) e k v st)
+  (define old-map (-meta-ref e EMPTY))
+  (define new-map (set/remove old-map k v))
   (cond
-    [st (chaperone-struct e st impersonator-prop:meta new-meta)]
+    [st (chaperone-struct e st impersonator-prop:meta new-map)]
     [(struct? e)
      (define-values (struct-type skipped?) (struct-info e))
-     (chaperone-struct e struct-type impersonator-prop:meta new-meta)]
+     (chaperone-struct e struct-type impersonator-prop:meta new-map)]
     [(procedure? e)
-     (chaperone-procedure e #f impersonator-prop:meta new-meta)]
+     (chaperone-procedure e #f impersonator-prop:meta new-map)]
     [(vector? e)
-     (chaperone-vector e #f #f impersonator-prop:meta new-meta)]
+     (chaperone-vector e #f #f impersonator-prop:meta new-map)]
     [(box? e)
-     (chaperone-box e (λ (_ x) x) (λ (_ x) x) impersonator-prop:meta new-meta)]
+     (chaperone-box e (λ (_ x) x) (λ (_ x) x) impersonator-prop:meta new-map)]
     [(hash? e)
      (define (ref-proc h k) (values k (λ (h _ v) v)))
      (define (set-proc h k v) (values k v))
@@ -142,10 +142,10 @@
      (define (key-proc h k) k)
      (chaperone-hash e
                      ref-proc set-proc remove-proc key-proc
-                     impersonator-prop:meta new-meta)]
+                     impersonator-prop:meta new-map)]
     [(or (set? e) (set-mutable? e) (set-weak? e))
      (chaperone-hash-set e #f #f #f #f
-                         impersonator-prop:meta new-meta)]
+                         impersonator-prop:meta new-map)]
     [(struct-type? e)
      (define struct-info-proc values)
      (define make-constructor-proc values)
@@ -155,31 +155,46 @@
                             struct-info-proc
                             make-constructor-proc
                             guard-proc
-                            impersonator-prop:meta new-meta)]
+                            impersonator-prop:meta new-map)]
     [(evt? e)
      (define (proc e) (values e values))
-     (chaperone-evt e proc impersonator-prop:meta new-meta)]
+     (chaperone-evt e proc impersonator-prop:meta new-map)]
     [(channel? e)
      (define (get-proc c) (values c values))
      (define (put-proc c v) v)
      (chaperone-channel e
                         get-proc put-proc
-                        impersonator-prop:meta new-meta)]
+                        impersonator-prop:meta new-map)]
     [(async-channel? e)
      (chaperone-async-channel e values values
-                              impersonator-prop:meta new-meta)]
+                              impersonator-prop:meta new-map)]
     [(continuation-prompt-tag? e)
      (chaperone-prompt-tag e
                            values values
-                           impersonator-prop:meta new-meta)]
+                           impersonator-prop:meta new-map)]
     [(continuation-mark-key? e)
      (chaperone-continuation-mark-key e
                                       values values
-                                      impersonator-prop:meta new-meta)]))
-(define (meta-hash-set ht k v)
-  (cond
-    [(eq? v REMOVE) (hash-remove ht k)]
-    [else (hash-set ht k v)]))
+                                      impersonator-prop:meta new-map)]))
+
+(define (-meta-set m k v)
+  (define kv* (cons k v))
+  (let go ([m m])
+    (match m
+      ['() (list kv*)]
+      [(cons (cons (== k) _) rst)
+       (cons kv* rst)]
+      [(cons kv rst)
+       (cons kv (go rst))])))
+
+(define (-meta-remove m k v)
+  (let go ([m m])
+    (match m
+      ['() null]
+      [(cons (cons (== k) _) rst)
+       rst]
+      [(cons kv rst)
+       (cons kv (go rst))])))
 
 (define (copy e)
   (cond
@@ -189,6 +204,9 @@
     [(byte-pregexp? e) (byte-pregexp (object-name e))]
     [(byte-regexp? e) (byte-regexp (object-name e))]))
 
+(define meta-set/chaperone (make-meta-set/chaperone -meta-set))
+(define meta-remove/chaperone (make-meta-set/chaperone -meta-remove))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; non-chaperone metadata
 
@@ -197,12 +215,15 @@
 (define (meta-ref/no-chaperone e)
   (hash-ref immutable-metas e #f))
 
-(define (meta-set/no-chaperone e k v)
-  (define old-meta (hash-ref immutable-metas e EMPTY))
-  (define new-meta (meta-hash-set old-meta k v))
+(define ((make-meta-set/no-chaperone set/remove) e k v)
+  (define old-map (hash-ref immutable-metas e EMPTY))
+  (define new-map (set/remove old-map k v))
   (define e* (copy e))
-  (hash-set! immutable-metas e* new-meta)
+  (hash-set! immutable-metas e* new-map)
   e*)
+
+(define meta-set/no-chaperone (make-meta-set/no-chaperone -meta-set))
+(define meta-remove/no-chaperone (make-meta-set/no-chaperone -meta-remove))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; tests
