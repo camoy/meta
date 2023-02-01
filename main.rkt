@@ -76,8 +76,7 @@
 
 (define (meta-ref e k [failure-result UNDEFINED])
   (define meta-map
-    (if (cannot-chaperone? e)
-        (meta-ref/no-chaperone e)
+    (or (meta-ref/no-chaperone e)
         (meta-ref/chaperone e)))
   (define kv-pair (and meta-map (assoc k meta-map)))
   (cond
